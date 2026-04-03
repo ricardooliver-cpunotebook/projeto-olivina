@@ -164,10 +164,6 @@
                 <h1 class="text-xl font-bold">Olivina - Lógica de Programação</h1>
                 <p class="text-xs opacity-80 italic">Plano de Estudo • Ricardo oliveiira da silva</p>
             </div>
-            <div id="user-stats" class="text-right hidden">
-                <p class="text-[10px] uppercase font-bold opacity-70">Sincronização Ativa</p>
-                <p id="user-id-display" class="font-mono text-[9px]"></p>
-            </div>
         </div>
     </nav>
 
@@ -272,274 +268,260 @@
     </main>
 
     <script type="module">
-        import { initializeApp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-app.js";
-        import { getAuth, signInAnonymously, onAuthStateChanged, signInWithCustomToken } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
-        import { getFirestore, doc, setDoc, onSnapshot, increment } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
+        // --- ESTADO GLOBAL DA APLICAÇÃO ---
+        let currentSelectedTopic = ""; // Armazena o tópico atualmente selecionado
+        let currentQuestionData = null; // Armazena a questão atual (online ou offline)
 
-        const firebaseConfig = JSON.parse(__firebase_config);
-        const app = initializeApp(firebaseConfig);
-        const auth = getAuth(app);
-        const db = getFirestore(app);
-        const appId = typeof __app_id !== 'undefined' ? __app_id : 'olivina-ulbra';
-        const apiKey = "SUA_CHAVE_API_AQUI"; // <-- IMPORTANTE: Insira sua chave da API Gemini aqui.
-
-        let user = null;
-        let currentTopic = "";
-        let currentQ = null;
-
-        // --- BANCO DE QUESTÕES OFFLINE (FALLBACK) ---
-        const offlineQuestionBank = {
-            'Variáveis e Operadores': [
-                {
-                    pergunta: "Qual será o valor final da variável 'resultado' após a execução do código?",
-                    temCodigo: true,
-                    codigo: "a = 10\nb = 3\nresultado = a % b + 5",
-                    opcoes: ["8", "6", "1", "5.33"],
-                    correta: 1,
-                    explicacao_detalhada: [
-                        { etapa: "Operador Módulo (%)", explicacao: "O operador '%' (módulo) calcula o resto da divisão de 'a' por 'b'. 10 dividido por 3 é 3, com resto 1." },
-                        { etapa: "Cálculo Parcial", explicacao: "A expressão 'a % b' resulta em 1." },
-                        { etapa: "Soma Final", explicacao: "O resultado parcial (1) é somado a 5, resultando na expressão '1 + 5'." },
-                        { etapa: "Resultado", explicacao: "O valor final armazenado na variável 'resultado' é 6." }
-                    ]
-                }
-            ],
-            'Estruturas Condicionais': [
-                {
-                    pergunta: "Considerando o código, qual mensagem será impressa na tela?",
-                    temCodigo: true,
-                    codigo: "idade = 18\npermissao = False\nif idade >= 18 and permissao:\n    print('Acesso Concedido')\nelif idade >= 18 and not permissao:\n    print('Acesso Negado - Requer Permissão')\nelse:\n    print('Acesso Negado')",
-                    opcoes: ["Acesso Concedido", "Acesso Negado - Requer Permissão", "Acesso Negado", "Nenhuma mensagem será impressa"],
-                    correta: 1,
-                    explicacao_detalhada: [
-                        { etapa: "Primeira Condição (if)", explicacao: "A condição 'idade >= 18 and permissao' é avaliada como 'True and False', que resulta em 'False'. O primeiro bloco não é executado." },
-                        { etapa: "Segunda Condição (elif)", explicacao: "A condição 'idade >= 18 and not permissao' é avaliada como 'True and not False', que resulta em 'True and True', que é 'True'. Este bloco é executado." },
-                        { etapa: "Execução", explicacao: "O programa imprime 'Acesso Negado - Requer Permissão'." }
-                    ]
-                }
-            ],
-            'Estruturas de Repetição': [
-                {
-                    pergunta: "Quantas vezes a palavra 'Loop' será impressa pelo código a seguir?",
-                    temCodigo: true,
-                    codigo: "contador = 0\nwhile contador < 5:\n    print('Loop')\n    contador += 2",
-                    opcoes: ["5 vezes", "2 vezes", "3 vezes", "Infinitas vezes"],
-                    correta: 2,
-                    explicacao_detalhada: [
-                        { etapa: "Iteração 1", explicacao: "contador = 0. A condição (0 < 5) é verdadeira. Imprime 'Loop'. contador vira 2." },
-                        { etapa: "Iteração 2", explicacao: "contador = 2. A condição (2 < 5) é verdadeira. Imprime 'Loop'. contador vira 4." },
-                        { etapa: "Iteração 3", explicacao: "contador = 4. A condição (4 < 5) é verdadeira. Imprime 'Loop'. contador vira 6." },
-                        { etapa: "Fim do Loop", explicacao: "contador = 6. A condição (6 < 5) é falsa. O loop termina. A palavra 'Loop' foi impressa 3 vezes." }
-                    ]
-                }
-            ]
+        // --- REFERÊNCIAS A ELEMENTOS DOM FREQUENTEMENTE USADOS ---
+        const dom = {
+            introScreen: document.getElementById('intro-screen'),
+            quizScreen: document.getElementById('quiz-screen'),
+            loader: document.getElementById('loader'),
+            quizContent: document.getElementById('quiz-content'),
+            activeTopicBadge: document.getElementById('active-topic'),
+            questionText: document.getElementById('question-text'),
+            codeBox: document.getElementById('code-box'),
+            codeDisplay: document.getElementById('code-display'),
+            optionsList: document.getElementById('options-list'),
+            feedbackSection: document.getElementById('feedback'),
+            feedbackAlert: document.getElementById('feedback-alert'),
+            explanationList: document.getElementById('explanation-list'),
+            retryButton: document.getElementById('retry-btn'),
+            topicSidebar: document.getElementById('topic-sidebar')
         };
 
-        function getOfflineQuestion() {
-            console.log(`%cModo Offline: Buscando questão local para "${currentTopic}"`, "color: #f59e0b; font-weight: bold;");
-            const questionsForTopic = offlineQuestionBank[currentTopic];
+        // --- GERADOR DE QUESTÕES PROGRAMÁTICO ---
+        const questionGenerator = {
+            // Função auxiliar para gerar um número aleatório
+            rand: (min, max) => Math.floor(Math.random() * (max - min + 1)) + min,
             
-            if (questionsForTopic && questionsForTopic.length > 0) {
-                const randomIndex = Math.floor(Math.random() * questionsForTopic.length);
-                currentQ = questionsForTopic[randomIndex];
-                // Adiciona um pequeno atraso para simular carregamento
-                setTimeout(renderQuestion, 500);
-            } else {
-                // Se não houver questão offline para o tópico
-                document.getElementById('error-message').innerHTML = `<p>Não há questões offline para este tópico.</p>`;
-                document.getElementById('error-message').classList.remove('hidden');
-            }
-        }
+            // Função auxiliar para embaralhar um array
+            shuffle: (array) => array.sort(() => Math.random() - 0.5),
 
-        // --- AUTENTICAÇÃO ---
-        const initAuth = async () => {
-            if (typeof __initial_auth_token !== 'undefined' && __initial_auth_token) {
-                await signInWithCustomToken(auth, __initial_auth_token);
-            } else {
-                await signInAnonymously(auth);
-            }
-        };
-        initAuth();
+            'Variáveis e Operadores': () => {
+                const num1 = questionGenerator.rand(1, 20);
+                const num2 = questionGenerator.rand(1, 10);
+                const operators = ['+', '-', '*', '%'];
+                const op = operators[questionGenerator.rand(0, 3)];
+                const correctAnswer = eval(`${num1} ${op} ${num2}`);
 
-        onAuthStateChanged(auth, (u) => {
-            user = u;
-            if (u) {
-                document.getElementById('user-stats').classList.remove('hidden');
-                document.getElementById('user-id-display').innerText = u.uid;
-                syncUserProgress();
-            }
-        });
+                const code = `a = ${num1}\nb = ${num2}\nresultado = a ${op} b`;
+                const questionText = "Qual será o valor final da variável 'resultado'?";
 
-        // --- SINCRONIZAÇÃO FIRESTORE ---
-        function syncUserProgress() {
-            if (!user) return;
-            const progressRef = doc(db, 'artifacts', appId, 'users', user.uid, 'learning_progress', 'stats');
-            onSnapshot(progressRef, (docSnap) => {
-                if (docSnap.exists()) {
-                    const data = docSnap.data();
-                    Object.keys(data).forEach(topicKey => {
-                        const score = data[topicKey];
-                        // Normaliza a chave para remover espaços e caracteres especiais como 'ç' e 'ã'
-                        const cleanKey = topicKey.normalize("NFD").replace(/[\u0300-\u036f]/g, "").replace(/\s+/g, '');
-                        const progBar = document.getElementById(`prog-${cleanKey}`);
-                        const valLabel = document.getElementById(`val-${cleanKey}`);
-                        if (progBar && valLabel) {
-                            valLabel.innerText = score;
-                            const percentage = Math.min((score / 15) * 100, 100);
-                            progBar.style.width = `${percentage}%`;
-                        }
-                    });
+                // Gera opções incorretas
+                const wrongOptions = [
+                    correctAnswer + questionGenerator.rand(1, 5),
+                    correctAnswer - questionGenerator.rand(1, 5),
+                    eval(`${num1} ${op === '+' ? '-' : '+'} ${num2}`)
+                ].filter((v, i, a) => a.indexOf(v) === i && v !== correctAnswer); // Garante que sejam únicas e diferentes da correta
+
+                const options = questionGenerator.shuffle([correctAnswer, ...wrongOptions.slice(0, 3)]);
+                const correctIndex = options.findIndex(o => o === correctAnswer);
+
+                return {
+                    pergunta: questionText,
+                    temCodigo: true,
+                    codigo: code,
+                    opcoes: options.map(String),
+                    correta: correctIndex,
+                    explicacao_detalhada: [
+                        { etapa: "Valores Iniciais", explicacao: `A variável 'a' recebe ${num1} e 'b' recebe ${num2}.` },
+                        { etapa: "Operação", explicacao: `A operação a ser realizada é ${num1} ${op} ${num2}.` },
+                        { etapa: "Resultado", explicacao: `O resultado do cálculo é ${correctAnswer}.` }
+                    ]
+                };
+            },
+
+            'Estruturas Condicionais': () => {
+                const val = questionGenerator.rand(0, 100);
+                const threshold = questionGenerator.rand(20, 80);
+                const operators = ['>', '<', '>=', '<='];
+                const op = operators[questionGenerator.rand(0, 3)];
+                const out1 = `"Opção A"`;
+                const out2 = `"Opção B"`;
+
+                const code = `valor = ${val}\nif valor ${op} ${threshold}:\n    print(${out1})\nelse:\n    print(${out2})`;
+                const questionText = "Qual será a saída do código a seguir?";
+                
+                const isConditionTrue = eval(`${val} ${op} ${threshold}`);
+                const correctAnswer = isConditionTrue ? "Opção A" : "Opção B";
+                const wrongAnswer = isConditionTrue ? "Opção B" : "Opção A";
+
+                const options = questionGenerator.shuffle([correctAnswer, wrongAnswer, `"Nenhuma saída"`, `"Erro"`]);
+                const correctIndex = options.findIndex(o => o === correctAnswer);
+
+                return {
+                    pergunta: questionText,
+                    temCodigo: true,
+                    codigo: code,
+                    opcoes: options,
+                    correta: correctIndex,
+                    explicacao_detalhada: [
+                        { etapa: "Condição", explicacao: `O código avalia a condição: ${val} ${op} ${threshold}.` },
+                        { etapa: "Avaliação", explicacao: `Essa condição é ${isConditionTrue ? 'Verdadeira' : 'Falsa'}.` },
+                        { etapa: "Execução", explicacao: `Como a condição é ${isConditionTrue ? 'Verdadeira' : 'Falsa'}, o bloco ${isConditionTrue ? 'if' : 'else'} é executado, imprimindo "${correctAnswer}".` }
+                    ]
+                };
+            },
+
+            'Estruturas de Repetição': () => {
+                const start = 0;
+                const limit = questionGenerator.rand(3, 6);
+                const increment = questionGenerator.rand(1, 2);
+
+                const code = `contador = ${start}\nwhile contador < ${limit}:\n    print("Loop")\n    contador += ${increment}`;
+                const questionText = "Quantas vezes a palavra 'Loop' será impressa?";
+
+                let loopCount = 0;
+                let tempCounter = start;
+                while (tempCounter < limit) {
+                    loopCount++;
+                    tempCounter += increment;
                 }
-            });
+
+                const options = questionGenerator.shuffle([loopCount, loopCount + 1, loopCount - 1, limit]);
+                const correctIndex = options.findIndex(o => o === loopCount);
+
+                return {
+                    pergunta: questionText,
+                    temCodigo: true,
+                    codigo: code,
+                    opcoes: options.map(String),
+                    correta: correctIndex,
+                    explicacao_detalhada: [
+                        { etapa: "Início", explicacao: `O loop começa com 'contador' = ${start} e continuará enquanto 'contador' < ${limit}.` },
+                        { etapa: "Incremento", explicacao: `A cada iteração, o contador aumenta em ${increment}.` },
+                        { etapa: "Contagem", explicacao: `O loop executará ${loopCount} vezes antes que a condição se torne falsa.` }
+                    ]
+                };
+            },
+
+            'Tipos Compostos': () => {
+                const len1 = questionGenerator.rand(2, 3);
+                const len2 = questionGenerator.rand(2, 3);
+                const list1 = Array.from({ length: len1 }, () => questionGenerator.rand(1, 9));
+                const list2 = Array.from({ length: len2 }, () => questionGenerator.rand(10, 19));
+
+                const code = `lista1 = [${list1.join(', ')}]\nlista2 = [${list2.join(', ')}]\nresultado = lista1 + lista2`;
+                const questionText = "Qual o valor final da variável 'resultado'?";
+
+                const correctAnswer = `[${[...list1, ...list2].join(', ')}]`;
+                const wrongOptions = [
+                    `[${list1[0] + list2[0]}]`, // Soma de elementos
+                    `[[${list1.join(', ')}], [${list2.join(', ')}]]`, // Lista de listas
+                    `[${[...list2, ...list1].join(', ')}]` // Ordem invertida
+                ];
+
+                const options = questionGenerator.shuffle([correctAnswer, ...wrongOptions.slice(0, 3)]);
+                const correctIndex = options.findIndex(o => o === correctAnswer);
+
+                return {
+                    pergunta: questionText,
+                    temCodigo: true,
+                    codigo: code,
+                    opcoes: options,
+                    correta: correctIndex,
+                    explicacao_detalhada: [
+                        { etapa: "Operação", explicacao: "O operador '+' em listas realiza a concatenação." },
+                        { etapa: "Resultado", explicacao: `Ele une 'lista1' e 'lista2', resultando em uma nova lista: ${correctAnswer}.` }
+                    ]
+                };
+            }
         }
 
         // --- INTERAÇÃO NOS MÓDULOS (SIDEBAR) ---
         window.setTopic = (topic, element) => {
-            // Remove estados de outros módulos
-            document.querySelectorAll('#topic-sidebar .card').forEach(c => {
+            dom.topicSidebar.querySelectorAll('.card').forEach(c => {
                 c.classList.remove('active-card', 'pulse-selection');
             });
             
-            // Ativa o piscar (Interação Anterior Mantida)
             element.classList.add('active-card', 'pulse-selection');
             
-            currentTopic = topic;
-            document.getElementById('intro-screen').classList.add('hidden');
-            document.getElementById('quiz-screen').classList.remove('hidden');
-            document.getElementById('active-topic').innerText = topic;
+            currentSelectedTopic = topic;
+            dom.introScreen.classList.add('hidden');
+            dom.quizScreen.classList.remove('hidden');
+            dom.activeTopicBadge.innerText = topic;
             
-            // Pequeno atraso para a animação ser visível
             setTimeout(() => {
                 window.nextQuestion();
             }, 300);
         };
 
         // --- GERAÇÃO DE QUESTÕES ---
-        window.nextQuestion = async () => {
-            const loader = document.getElementById('loader');
-            const content = document.getElementById('quiz-content');
-            const feedback = document.getElementById('feedback');
-            document.getElementById('error-message').classList.add('hidden');
+        window.nextQuestion = () => {
+            dom.loader.classList.remove('hidden');
+            dom.quizContent.classList.add('hidden');
+            dom.feedbackSection.classList.add('hidden');
+
+            // Gera uma nova questão usando o gerador programático
+            const generatorFn = questionGenerator[currentSelectedTopic] || questionGenerator['Variáveis e Operadores'];
+            currentQuestionData = generatorFn();
             
-            loader.classList.remove('hidden');
-            content.classList.add('hidden');
-            feedback.classList.add('hidden');
-
-            const prompt = `Gera uma questão de escolha múltipla (A, B, C, D) sobre "${currentTopic}" de Lógica de Programação em Python.
-            Crie uma questão original, desafiadora e que não seja trivial. Varie o tipo de problema (ex: interpretação de código, identificação de erro, preenchimento de lacunas).
-            Usa termos académicos. Retorna o resultado estritamente no formato JSON: {
-                pergunta: "String", 
-                temCodigo: boolean, 
-                codigo: "Código Python", 
-                opcoes: ["A", "B", "C", "D"], 
-                correta: index, 
-                explicacao_detalhada: [{etapa: "Passo X", explicacao: "Explicação"}]
-            }`;
-
-            try {
-                if (!apiKey || apiKey === "SUA_CHAVE_API_AQUI") {
-                    throw new Error("A chave de API da Gemini não foi configurada.");
-                }
-                const res = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-pro:generateContent?key=${apiKey}`, {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({
-                        contents: [{ parts: [{ text: prompt }] }],
-                        generationConfig: { response_mime_type: "application/json" }
-                    })
-                });
-                
-                if (!res.ok) {
-                    throw new Error(`API Error: ${res.status} ${res.statusText}`);
-                }
-
-                const data = await res.json();
-                currentQ = data.candidates[0].content.parts[0].text;
-                renderQuestion();
-            } catch (e) {
-                console.error("Erro ao gerar questão:", e);
-                // Fallback para o modo offline
-                getOfflineQuestion();
-            }
+            // Simula um pequeno atraso de carregamento
+            setTimeout(renderQuestion, 250);
         };
 
         function renderQuestion() {
-            document.getElementById('loader').classList.add('hidden');
-            document.getElementById('quiz-content').classList.remove('hidden');
-            document.getElementById('question-text').innerText = currentQ.pergunta;
+            dom.loader.classList.add('hidden');
+            dom.quizContent.classList.remove('hidden');
+            dom.questionText.innerText = currentQuestionData.pergunta;
             
-            const codeBox = document.getElementById('code-box');
-            if(currentQ.temCodigo) {
-                codeBox.classList.remove('hidden');
-                document.getElementById('code-display').innerText = currentQ.codigo;
+            if(currentQuestionData.temCodigo) {
+                dom.codeBox.classList.remove('hidden');
+                dom.codeDisplay.innerText = currentQuestionData.codigo;
             } else {
-                codeBox.classList.add('hidden');
+                dom.codeBox.classList.add('hidden');
             }
 
-            const list = document.getElementById('options-list');
-            list.innerHTML = '';
-            currentQ.opcoes.forEach((opt, i) => {
+            dom.optionsList.innerHTML = '';
+            currentQuestionData.opcoes.forEach((opt, i) => {
                 const btn = document.createElement('button');
                 btn.className = "option-btn";
                 btn.innerHTML = `<span id="letter-${i}" class="option-letter">${String.fromCharCode(65+i)}</span><span class="flex-1 font-semibold text-slate-700">${opt}</span>`;
                 btn.onclick = () => checkAnswer(i);
-                list.appendChild(btn);
+                dom.optionsList.appendChild(btn);
             });
         }
 
         // --- INTERAÇÃO NAS OPÇÕES (PISCAR) ---
-        async function checkAnswer(idx) {
-            if (!user) return;
-            const isCorrect = idx === currentQ.correta;
-            const letter = document.getElementById(`letter-${idx}`);
-            const fb = document.getElementById('feedback');
-            const alert = document.getElementById('feedback-alert');
-            const retryBtn = document.getElementById('retry-btn');
-            const explList = document.getElementById('explanation-list');
+        function checkAnswer(selectedIndex) {
+            const isCorrect = selectedIndex === currentQuestionData.correta;
+            const letter = document.getElementById(`letter-${selectedIndex}`);
 
-            document.querySelectorAll('.option-btn').forEach(b => b.disabled = true);
+            dom.optionsList.querySelectorAll('.option-btn').forEach(b => b.disabled = true);
 
-            // Aplica animação de piscar baseada no resultado (Interação Anterior Mantida)
             if (isCorrect) {
                 letter.classList.add('pulse-correct');
-                alert.className = "p-5 rounded-2xl mb-8 text-sm font-bold flex items-center gap-4 bg-green-50 text-green-700 border border-green-100";
-                alert.innerHTML = `<div class="bg-green-500 text-white w-8 h-8 rounded-full flex items-center justify-center shrink-0"><i class="fas fa-check"></i></div> <span>Resposta Correta! Progresso guardado.</span>`;
-                retryBtn.classList.add('hidden');
-                
-                // Gravação no Cloud
-                const progressRef = doc(db, 'artifacts', appId, 'users', user.uid, 'learning_progress', 'stats');
-                const cleanKey = currentTopic.normalize("NFD").replace(/[\u0300-\u036f]/g, "").replace(/\s+/g, '');
-                try {
-                    await setDoc(progressRef, { [cleanKey]: increment(1) }, { merge: true });
-                } catch(e) {}
+                dom.feedbackAlert.className = "p-5 rounded-2xl mb-8 text-sm font-bold flex items-center gap-4 bg-green-50 text-green-700 border border-green-100";
+                dom.feedbackAlert.innerHTML = `<div class="bg-green-500 text-white w-8 h-8 rounded-full flex items-center justify-center shrink-0"><i class="fas fa-check"></i></div> <span>Resposta Correta!</span>`;
+                dom.retryButton.classList.add('hidden');
             } else {
                 letter.classList.add('pulse-wrong');
-                alert.className = "p-5 rounded-2xl mb-8 text-sm font-bold flex items-center gap-4 bg-red-50 text-red-700 border border-red-100";
-                alert.innerHTML = `<div class="bg-red-500 text-white w-8 h-8 rounded-full flex items-center justify-center shrink-0"><i class="fas fa-times"></i></div> <span>Lógica incorreta. Verifica a análise abaixo.</span>`;
-                retryBtn.classList.remove('hidden');
+                dom.feedbackAlert.className = "p-5 rounded-2xl mb-8 text-sm font-bold flex items-center gap-4 bg-red-50 text-red-700 border border-red-100";
+                dom.feedbackAlert.innerHTML = `<div class="bg-red-500 text-white w-8 h-8 rounded-full flex items-center justify-center shrink-0"><i class="fas fa-times"></i></div> <span>Lógica incorreta. Verifique a análise abaixo.</span>`;
+                dom.retryButton.classList.remove('hidden');
             }
 
             // Renderiza explicação
-            explList.innerHTML = '';
-            currentQ.explicacao_detalhada.forEach(item => {
+            dom.explanationList.innerHTML = '';
+            currentQuestionData.explicacao_detalhada.forEach(item => {
                 const div = document.createElement('div');
                 div.className = "line-detail";
                 div.innerHTML = `<span class="line-num">${item.etapa}</span><span class="text-[13px] text-slate-600">${item.explicacao}</span>`;
-                explList.appendChild(div);
+                dom.explanationList.appendChild(div);
             });
 
-            fb.classList.remove('hidden');
-            fb.scrollIntoView({ behavior: 'smooth' });
+            dom.feedbackSection.classList.remove('hidden');
+            dom.feedbackSection.scrollIntoView({ behavior: 'smooth' });
         }
 
         window.retryQuestion = () => {
-            document.getElementById('feedback').classList.add('hidden');
-            document.querySelectorAll('.option-btn').forEach((b, i) => {
+            dom.feedbackSection.classList.add('hidden');
+            dom.optionsList.querySelectorAll('.option-btn').forEach((b, i) => {
                 b.disabled = false;
                 const letter = document.getElementById(`letter-${i}`);
                 if(letter) letter.classList.remove('pulse-correct', 'pulse-wrong');
             });
-            document.getElementById('feedback').scrollIntoView({ behavior: 'smooth' }); // Rola de volta para o feedback
             window.scrollTo({ top: 0, behavior: 'smooth' });
         };
     </script>
